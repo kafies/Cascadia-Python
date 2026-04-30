@@ -73,7 +73,6 @@ class ScoreBreakdown:
                 f"Nature={self.nature_tokens} "
                 f"TOTAL={self.total}")
 
-
 # Player state
 class Player:
     def __init__(self, name: str, is_human: bool = True):
@@ -95,8 +94,6 @@ class Player:
         if self.score_breakdown:
             return self.score_breakdown.total
         return 0
-
-
 
 # Game Engine
 class GameEngine:
@@ -125,7 +122,7 @@ class GameEngine:
         self._pending_return: List[Wildlife] = []
 
         self._setup()
-    
+
     # Setup
     def _setup(self):
         # Build and shuffle tile deck

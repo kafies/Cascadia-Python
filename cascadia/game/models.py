@@ -8,7 +8,6 @@ from enum import Enum, auto
 from typing import Optional, List, Set, Tuple
 import random
 
-
 # Enumerations
 class Habitat(Enum):
     MOUNTAIN = "Mountain"
@@ -24,7 +23,6 @@ class Wildlife(Enum):
     SALMON = "Salmon"
     HAWK = "Hawk"
     FOX = "Fox"
-
 
 # Habitat Tile
 @dataclass
@@ -61,7 +59,6 @@ class HabitatTile:
         tok = f"[{self.wildlife_token.value}]" if self.wildlife_token else ""
         return f"Tile({self.tile_id} {h} {w}{ks}{tok})"
 
-
 # Wildlife Scoring Card
 class ScoringVariant(Enum):
     A = "A"
@@ -80,7 +77,6 @@ class WildlifeScoringCard:
     description: str
     # Scoring table: maps group_size (or special key) -> points
     score_table: dict
-
 
 # Draft Pool Entry
 @dataclass
@@ -179,7 +175,7 @@ class PlayerEnvironment:
         groups = self.get_contiguous_groups(habitat)
         return max((len(g) for g in groups), default=0)
 
-    # Wildlife adjacency helpers 
+    # Wildlife adjacency helpers
     def get_adjacent_wildlife(self, q: int, r: int) -> List[Wildlife]:
         """Return list of wildlife tokens on tiles adjacent to (q, r)."""
         result = []

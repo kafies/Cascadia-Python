@@ -1,10 +1,2 @@
-# Cascadia Digital Board Game - Dependencies
-# Python 3.9+ required
-# All packages below are either stdlib or lightweight
-
-# No external dependencies beyond Python stdlib!
-# tkinter is included with standard Python distributions.
-# sqlite3 is included with Python stdlib.
-
-# For development/testing only (optional):
+# For development/testing only:
 # pytest>=7.0

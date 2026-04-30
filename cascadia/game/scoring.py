@@ -10,7 +10,6 @@ from cascadia.game.models import Wildlife, Habitat, ScoringVariant
 if TYPE_CHECKING:
     from cascadia.game.models import PlayerEnvironment
 
-
 # Helper: Hex line-of-sight directions (flat-side to flat-side)
 # For axial coordinates the 3 axes: (1,0)/(-1,0), (0,1)/(0,-1), (1,-1)/(-1,1)
 HAWK_DIRECTIONS = [(1, 0), (-1, 0), (0, 1), (0, -1), (1, -1), (-1, 1)]
@@ -270,7 +269,6 @@ def score_salmon_D(env: "PlayerEnvironment") -> int:
         score += len(adjacent_non_run)
     return score
 
-
 # HAWK SCORING
 # Hawks score for isolation and line-of-sight
 def score_hawks_A(env: "PlayerEnvironment") -> int:
@@ -442,7 +440,6 @@ def score_foxes_D(env: "PlayerEnvironment") -> int:
             # Unpaired fox - score as single
             pass
     return score
-
 
 # FAMILY / INTERMEDIATE SCORING (simple group scoring)
 def score_family(env: "PlayerEnvironment", wildlife: Wildlife) -> int:

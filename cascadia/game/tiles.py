@@ -12,6 +12,7 @@ W = Wildlife
 def _t(habitats, wildlife, keystone=False) -> dict:
     return {"habitats": list(habitats), "wildlife": set(wildlife), "keystone": keystone}
 
+
 # 25 Keystone Tiles (5 per habitat, single habitat, single wildlife slot)
 KEYSTONE_SPECS = (
     [_t([H.MOUNTAIN], [W.BEAR],   True)] * 2 +
@@ -70,7 +71,7 @@ DOUBLE_SPECS = (
     [_t([H.WETLAND, H.RIVER],    [W.SALMON, W.HAWK])]     * 2
 )
 
-ALL_TILE_SPECS = KEYSTONE_SPECS + DOUBLE_SPECS  # 25 + 60 = 85
+ALL_TILE_SPECS = KEYSTONE_SPECS + DOUBLE_SPECS
 
 # 5 Starter Tiles — each is a SINGLE hex with 1 habitat and 2-3 wildlife slots
 # (Players get one each; they are individual hexes, not 3-tile combos)
