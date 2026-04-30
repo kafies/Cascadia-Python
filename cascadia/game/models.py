@@ -32,6 +32,7 @@ class HabitatTile:
     wildlife_slots: Set[Wildlife]
     is_keystone: bool = False
     wildlife_token: Optional[Wildlife] = None
+    rotation: int = 0
 
     @property
     def primary_habitat(self) -> Habitat:

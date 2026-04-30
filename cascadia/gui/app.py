@@ -12,7 +12,7 @@ from cascadia.game.engine import GameEngine, Player, ScoreBreakdown
 from cascadia.game.models import Wildlife, Habitat, HabitatTile, ScoringVariant
 from cascadia.storage.database import DatabaseManager
 from cascadia.utils.helpers import (
-    hex_to_pixel, pixel_to_hex, hex_corners,
+    hex_to_pixel, pixel_to_hex, hex_corners, hex_split_polygons,
     HABITAT_COLORS, WILDLIFE_COLORS, WILDLIFE_EMOJI, HABITAT_EMOJI,
     format_score_table, format_duration
 )
@@ -149,7 +149,6 @@ class NatureWipeDialog(tk.Toplevel):
         self.result = indices
         self.destroy()
 
-
 # Free-Pick Dialog  (choose tile from one slot, token from another)
 class FreePickDialog(tk.Toplevel):
     """Nature Token free pick: choose tile slot and token slot independently."""
@@ -278,6 +277,8 @@ class HexCanvas(tk.Canvas):
         self.bind("<ButtonPress-3>", self._drag_start_cb)
         self.bind("<B2-Motion>",     self._on_drag)
         self.bind("<B3-Motion>",     self._on_drag)
+        self.bind("<ButtonRelease-2>", self._drag_end_cb)
+        self.bind("<ButtonRelease-3>", self._drag_end_cb)
         self.bind("<MouseWheel>",    self._on_scroll)
         self.bind("<Button-4>",      self._on_scroll)
         self.bind("<Button-5>",      self._on_scroll)
@@ -338,12 +339,11 @@ class HexCanvas(tk.Canvas):
         ow       = 3     if selected else 1
 
         if h2:
-            col2      = HABITAT_RICH[h2][1]
-            lf = [c for pt in [corners[i] for i in (0,1,2,3)] for c in pt]
-            rf = [c for pt in [corners[i] for i in (0,3,4,5)] for c in pt]
-            self.create_polygon(lf, fill=col_mid, outline="",      tags="tile")
-            self.create_polygon(rf, fill=col2,    outline="",      tags="tile")
-            self.create_polygon(flat, fill="",    outline=outline, width=ow, tags="tile")
+            col2          = HABITAT_RICH[h2][1]
+            lf, rf        = hex_split_polygons(corners, getattr(tile, "rotation", 0))
+            self.create_polygon(lf,   fill=col_mid, outline="",      tags="tile")
+            self.create_polygon(rf,   fill=col2,    outline="",      tags="tile")
+            self.create_polygon(flat, fill="",      outline=outline, width=ow, tags="tile")
         else:
             self.create_polygon(flat, fill=col_mid, outline=outline, width=ow, tags="tile")
 
@@ -429,8 +429,7 @@ class HexCanvas(tk.Canvas):
                              font=("Courier New", 9, "bold"), tags="legend")
             x += sw + 56
 
-    # interaction
-
+    #  interaction
     def _on_resize(self, _=None):
         self.redraw()
 
@@ -453,6 +452,9 @@ class HexCanvas(tk.Canvas):
         self._offset_x = self._drag_off[0] + dx
         self._offset_y = self._drag_off[1] + dy
         self.redraw()
+
+    def _drag_end_cb(self, event):
+        self._drag_start = None
 
     def _on_scroll(self, event):
         factor = 1.12 if (event.num == 4 or event.delta > 0) else 1/1.12
@@ -494,6 +496,7 @@ class DraftPoolWidget(tk.Frame):
             self._build_card(i, entry)
 
     def lock(self):
+        """Lock selection after player picks — prevents re-selection."""
         self._locked = True
         self.refresh()
 
@@ -581,7 +584,6 @@ class DraftPoolWidget(tk.Frame):
     def selected_idx(self) -> Optional[int]:
         return self._sel
 
-
 # Game Log
 class GameLog(tk.Frame):
     def __init__(self, parent, **kwargs):
@@ -623,7 +625,8 @@ class GameLog(tk.Frame):
 
         self._text.config(state=tk.NORMAL)
         self._text.insert(tk.END, msg + "\n", tag or ())
-        self._text.see(tk.END)
+        self._text.update_idletasks()
+        self._text.after(10, lambda: self._text.yview_moveto(1.0))
         self._text.config(state=tk.DISABLED)
 
     def _clear(self):
@@ -770,6 +773,171 @@ class HistoryWindow(tk.Toplevel):
             t.insert("", tk.END, values=(
                 rank, r["player_name"], r["games"], r["wins"],
                 r["best_score"], f"{r['avg_score']:.1f}"))
+
+
+# Tile Rotation Preview Dialog
+# Shows all 6 rotation states as small hex previews; player picks one.
+class TileRotatePreview(tk.Toplevel):
+    """
+    6-panel preview of a dual-habitat tile at every rotation.
+    Flat-top hex has 3 split axes × 2 colour-swap = 6 orientations.
+    Rotations 0-2 put H1 on the left half, 3-5 put H2 on the left half.
+    """
+    PREVIEW_SIZE  = 58   # hex radius in px for each preview cell
+    CELL_W        = 150
+    CELL_H        = 150
+    COLS          = 3    # 3 columns × 2 rows = 6 cells
+
+    _W_ABBR = {
+        Wildlife.BEAR:   ("BR", "#8B3A0F"),
+        Wildlife.ELK:    ("EL", "#A0522D"),
+        Wildlife.SALMON: ("SN", "#C62828"),
+        Wildlife.HAWK:   ("HK", "#455A64"),
+        Wildlife.FOX:    ("FX", "#E64A00"),
+    }
+
+    def __init__(self, parent, tile: HabitatTile, on_confirm=None):
+        super().__init__(parent)
+        self.title("Choose Tile Rotation")
+        self.configure(bg=BG_DARK)
+        self.resizable(False, False)
+        self.grab_set()
+
+        self.tile        = tile
+        self.on_confirm  = on_confirm
+        self._selected   = tile.rotation
+
+        self._build()
+        self.wait_window()
+
+    def _build(self):
+        tk.Label(self, text="Choose Tile Orientation",
+                 bg=BG_DARK, fg=GOLD, font=FONT_H2).pack(pady=(12, 4))
+
+        h1, h2 = self.tile.habitats[0], self.tile.habitats[1]
+        info   = (f"{HABITAT_EMOJI[h1]} {h1.value}  /  {HABITAT_EMOJI[h2]} {h2.value}  —  "
+                  f"Click a preview to select, then confirm.")
+        tk.Label(self, text=info, bg=BG_DARK, fg=TEXT_DIM,
+                 font=FONT_UI).pack(pady=(0, 8))
+        
+        grid_frame = tk.Frame(self, bg=BG_DARK)
+        grid_frame.pack(padx=16, pady=4)
+
+        self._cells: List[tk.Canvas] = []
+        for rot in range(6):
+            row_f = rot // self.COLS
+            col_f = rot %  self.COLS
+            cell  = tk.Canvas(grid_frame,
+                              width=self.CELL_W, height=self.CELL_H,
+                              bg="#0A141E", highlightthickness=2,
+                              highlightbackground=GOLD if rot == self._selected else "#2A4060",
+                              cursor="hand2")
+            cell.grid(row=row_f, column=col_f, padx=6, pady=6)
+            cell.bind("<Button-1>", lambda e, r=rot: self._select(r))
+            self._cells.append(cell)
+            self._draw_preview(cell, rot)
+
+        # rotation labels row
+        lbl_frame = tk.Frame(self, bg=BG_DARK)
+        lbl_frame.pack()
+        rot_names = ["Split ←→", "Split ↗↙", "Split ↖↘",
+                     "Flip ←→",  "Flip ↗↙",  "Flip ↖↘"]
+        for rot, name in enumerate(rot_names):
+            col = GOLD if rot == self._selected else TEXT_DIM
+            tk.Label(lbl_frame, text=name, bg=BG_DARK, fg=col,
+                     font=("Courier New", 8), width=12).grid(
+                         row=0, column=rot % self.COLS,
+                         padx=6 if rot < 3 else 6)
+
+        btn_row = tk.Frame(self, bg=BG_DARK)
+        btn_row.pack(pady=14)
+        self._confirm_btn = tk.Button(btn_row, text="Apply Rotation",
+                                      command=self._confirm,
+                                      bg=ACCENT, fg="white", font=FONT_B,
+                                      relief=tk.FLAT, padx=16, pady=6)
+        self._confirm_btn.pack(side=tk.LEFT, padx=8)
+        tk.Button(btn_row, text="Cancel", command=self.destroy,
+                  bg=BG_MID, fg=TEXT_MAIN, font=FONT_B,
+                  relief=tk.FLAT, padx=16, pady=6).pack(side=tk.LEFT, padx=8)
+
+    def _draw_preview(self, canvas: tk.Canvas, rotation: int):
+        """Draw one hex preview at the given rotation."""
+        canvas.delete("all")
+        cx = self.CELL_W // 2
+        cy = self.CELL_H // 2
+        sz = self.PREVIEW_SIZE
+
+        corners = hex_corners(cx, cy, sz - 1)
+        flat    = [c for pt in corners for c in pt]
+
+        h1 = self.tile.habitats[0]
+        h2 = self.tile.habitats[1]
+        col1 = HABITAT_RICH[h1][1]
+        col2 = HABITAT_RICH[h2][1]
+
+        lf, rf = hex_split_polygons(corners, rotation)
+        canvas.create_polygon(lf,   fill=col1, outline="",       )
+        canvas.create_polygon(rf,   fill=col2, outline="",       )
+        canvas.create_polygon(flat, fill="",   outline="#CCCCCC", width=1)
+
+        # habitat abbreviations on each half
+        fsz = 9
+        # left label at centroid of left half corners
+        li = [[0,1,2,3],[1,2,3,4],[2,3,4,5],
+              [0,3,4,5],[1,4,5,0],[2,5,0,1]][rotation]
+        ri = [[0,3,4,5],[1,4,5,0],[2,5,0,1],
+              [0,1,2,3],[1,2,3,4],[2,3,4,5]][rotation]
+        lx = round(sum(corners[i][0] for i in li) / len(li))
+        ly = round(sum(corners[i][1] for i in li) / len(li))
+        rx = round(sum(corners[i][0] for i in ri) / len(ri))
+        ry = round(sum(corners[i][1] for i in ri) / len(ri))
+
+        canvas.create_text(lx, ly, text=h1.value[:3].upper(),
+                           fill="white", font=("Courier New", fsz, "bold"))
+        canvas.create_text(rx, ry, text=h2.value[:3].upper(),
+                           fill="white", font=("Courier New", fsz, "bold"))
+
+        # wildlife slots — tiny squares bottom strip
+        slots = list(self.tile.wildlife_slots)
+        n     = len(slots)
+        sq    = 8
+        gap   = sq * 2 + 3
+        x0    = cx - round((n - 1) * gap / 2)
+        by    = cy + round(sz * 0.60)
+        for i, w in enumerate(slots):
+            sx      = round(x0 + i * gap)
+            _, wc   = self._W_ABBR[w]
+            canvas.create_rectangle(sx-sq, by-sq, sx+sq, by+sq,
+                                    fill=wc, outline="#DDDDDD", width=1)
+
+        # keystone marker
+        if self.tile.is_keystone:
+            canvas.create_text(cx + sz - 6, cy - sz + 8, text="*K",
+                               fill=GOLD, font=("Courier New", 8, "bold"))
+
+        # selected ring
+        if rotation == self._selected:
+            ring_corners = hex_corners(cx, cy, sz + 2)
+            ring_flat    = [c for pt in ring_corners for c in pt]
+            canvas.create_polygon(ring_flat, fill="", outline=GOLD, width=3)
+
+    def _select(self, rotation: int):
+        self._selected = rotation
+        # apply immediately to tile so the main board previews update too
+        self.tile.rotation = rotation
+        for rot, cell in enumerate(self._cells):
+            cell.config(
+                highlightbackground=GOLD if rot == self._selected else "#2A4060")
+            self._draw_preview(cell, rot)
+        # refresh rotation name labels
+        if self.on_confirm:
+            self.on_confirm(rotation)
+
+    def _confirm(self):
+        self.tile.rotation = self._selected
+        if self.on_confirm:
+            self.on_confirm(self._selected)
+        self.destroy()
 
 # Main Application
 class CascadiaApp:
@@ -950,7 +1118,7 @@ class CascadiaApp:
                              font=FONT_UI, relief=tk.FLAT, padx=6, pady=5,
                              cursor="hand2", wraplength=290, justify=tk.LEFT)
 
-        self._rotate_btn = abtn("Rotate Tile (before placing)", self._rotate_tile, fg=BLUE_HL)
+        self._rotate_btn = abtn("Preview & Rotate Tile  ↻", self._rotate_tile, fg=BLUE_HL)
         self._skip_btn   = abtn("Skip token placement",         self._skip_token)
         self._nat_free   = abtn("Nature Token — Free Pick",     self._use_nature_free, fg=ACCENT2)
         self._nat_wipe   = abtn("Nature Token — Wipe Tokens",   self._use_nature_wipe, fg=ACCENT2)
@@ -961,9 +1129,6 @@ class CascadiaApp:
         self._nat_wipe.pack(fill=tk.X, pady=2)
 
         tk.Frame(left, bg="#1E3048", height=1).pack(fill=tk.X, padx=6, pady=4)
-
-        self._game_log = GameLog(left)
-        self._game_log.pack(fill=tk.BOTH, expand=True)
 
         # CENTER — tabbed hex environments
         center = tk.Frame(content, bg=BG_DARK)
@@ -986,6 +1151,10 @@ class CascadiaApp:
         right.pack(side=tk.RIGHT, fill=tk.Y)
         right.pack_propagate(False)
         self._build_scoring_sidebar(right)
+
+        tk.Frame(right, bg="#1E3048", height=1).pack(fill=tk.X, padx=6, pady=4)
+        self._game_log = GameLog(right)
+        self._game_log.pack(fill=tk.BOTH, expand=True, padx=4, pady=(4, 8))
 
         self._log("Game started! Good luck.", "system")
         self._refresh_ui()
@@ -1099,16 +1268,19 @@ class CascadiaApp:
 
     # rotate tile
     def _rotate_tile(self):
-        """Rotate the selected draft tile's habitat order (visual only, 
-        affects dual-habitat split rendering)."""
+        """Open the tile rotation preview dialog for the selected draft slot."""
         sel = self._draft_widget.selected_idx
         if sel is None or self._phase != "tile":
             return
         entry = self.engine.draft_pool[sel]
         tile  = entry.tile
-        if len(tile.habitats) > 1:
-            tile.habitats = tile.habitats[1:] + tile.habitats[:1]
-            self._log(f"  Rotated tile: now {tile.habitats[0].value}/{tile.habitats[1].value if len(tile.habitats)>1 else ''}", "system")
+        if len(tile.habitats) < 2:
+            messagebox.showinfo("Single Habitat",
+                                "This tile has only one habitat — no rotation needed.")
+            return
+        TileRotatePreview(self.root, tile, on_confirm=self._on_rotation_confirmed)
+
+    def _on_rotation_confirmed(self, rotation: int):
         self._draft_widget.refresh()
         self._refresh_ui()
 
@@ -1240,7 +1412,7 @@ class CascadiaApp:
 
         self.engine.advance_turn()
         cp = self.engine.current_player
-        self._log(f"\n{'═'*28}\n  {cp.name}'s turn begins\n{'═'*28}", "turn")
+        self._log(f"\n{'═'*5}\n  {cp.name}'s turn begins\n{'═'*5}", "turn")
         self._refresh_ui()
 
     # nature tokens
@@ -1273,7 +1445,7 @@ class CascadiaApp:
         # "free_tile" so _on_hex_click skips the draft-pool check entirely.
         self._cur_tile        = tile
         self._cur_token       = token
-        self._phase           = "free_tile" 
+        self._phase           = "free_tile"   # handled separately in _on_hex_click
         self._free_pick       = False
 
         self._draft_widget.lock()

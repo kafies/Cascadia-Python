@@ -127,3 +127,22 @@ def format_duration(seconds: int) -> str:
 
 def clamp(value, lo, hi):
     return max(lo, min(hi, value))
+
+
+def hex_split_polygons(corners: List[Tuple[float, float]],
+                       rotation: int) -> Tuple[List[float], List[float]]:
+    n = len(corners)  # always 6
+    rot = rotation % 6
+    # base split index pairs for rotations 0-2
+    splits = [
+        ([0,1,2,3], [0,3,4,5]),
+        ([1,2,3,4], [1,4,5,0]),
+        ([2,3,4,5], [2,5,0,1]),
+    ]
+    base = rot % 3
+    left_idx, right_idx = splits[base]
+    if rot >= 3:
+        left_idx, right_idx = right_idx, left_idx   # swap = flip primary colour side
+    left_flat  = [c for i in left_idx  for c in corners[i]]
+    right_flat = [c for i in right_idx for c in corners[i]]
+    return left_flat, right_flat
