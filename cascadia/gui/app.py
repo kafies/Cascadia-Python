@@ -325,6 +325,28 @@ class HexCanvas(tk.Canvas):
         x, y = hex_to_pixel(q, r, size, cx, cy)
         return round(x), round(y)
 
+    @staticmethod
+    def _wedge_polygons(tx: int, ty: int, corners, rotation: int):
+        """
+        Split a hex into a large main body and a small corner wedge (1/6 slice).
+        The wedge = triangle: center + corner[rot] + corner[(rot+1)%6].
+        The body  = the remaining 5-cornered polygon.
+
+        Returns (body_flat, wedge_flat) as flat [x,y,...] coordinate lists.
+        """
+        r0 = rotation % 6
+        r1 = (r0 + 1) % 6
+        cx, cy = tx, ty
+        # wedge: 3 points — center + two adjacent corners
+        wedge = [cx, cy, corners[r0][0], corners[r0][1],
+                 corners[r1][0], corners[r1][1]]
+        # body: center + the other 5 corners in order
+        body_pts = [cx, cy]
+        for i in range(5):
+            idx = (r1 + i) % 6
+            body_pts += [corners[idx][0], corners[idx][1]]
+        return body_pts, wedge
+
     def _draw_tile(self, q, r, tile: HabitatTile, cx, cy, size):
         tx, ty  = self._ixy(q, r, cx, cy, size)
         corners = hex_corners(tx, ty, size - 1)
@@ -332,36 +354,55 @@ class HexCanvas(tk.Canvas):
 
         h1 = tile.habitats[0]
         h2 = tile.habitats[1] if len(tile.habitats) > 1 else None
-        _, col_mid, _ = HABITAT_RICH[h1]
+        _, col1, _ = HABITAT_RICH[h1]
 
         selected = (q, r) == self._selected_hex
         outline  = GOLD  if selected else "#BBBBBB"
         ow       = 3     if selected else 1
 
         if h2:
-            col2          = HABITAT_RICH[h2][1]
-            lf, rf        = hex_split_polygons(corners, getattr(tile, "rotation", 0))
-            self.create_polygon(lf,   fill=col_mid, outline="",      tags="tile")
-            self.create_polygon(rf,   fill=col2,    outline="",      tags="tile")
-            self.create_polygon(flat, fill="",      outline=outline, width=ow, tags="tile")
-        else:
-            self.create_polygon(flat, fill=col_mid, outline=outline, width=ow, tags="tile")
+            _, col2, _ = HABITAT_RICH[h2]
+            rot        = getattr(tile, "rotation", 0)
+            body, wedge = self._wedge_polygons(tx, ty, corners, rot)
+            # Full hex in h1 colour first, then wedge in h2 on top
+            self.create_polygon(flat,  fill=col1, outline="",      tags="tile")
+            self.create_polygon(wedge, fill=col2, outline="",      tags="tile")
+            # Border on top of everything
+            self.create_polygon(flat, fill="", outline=outline, width=ow, tags="tile")
+            # Thin divider line between the two zones
+            r0 = rot % 6
+            r1 = (r0 + 1) % 6
+            self.create_line(tx, ty, corners[r0][0], corners[r0][1],
+                             fill="#000000", width=1, tags="tile")
+            self.create_line(tx, ty, corners[r1][0], corners[r1][1],
+                             fill="#000000", width=1, tags="tile")
 
-        # habitat label
+            # Small habitat label inside wedge (centroid of the triangle)
+            wlx = round((tx + corners[r0][0] + corners[r1][0]) / 3)
+            wly = round((ty + corners[r0][1] + corners[r1][1]) / 3)
+            if size >= 30:
+                fsz2 = max(6, round(size * 0.14))
+                self.create_text(wlx, wly, text=h2.value[:3].upper(),
+                                 fill="#FFFFFF",
+                                 font=("Courier New", fsz2, "bold"),
+                                 tags="tile")
+        else:
+            self.create_polygon(flat, fill=col1, outline=outline, width=ow, tags="tile")
+
+        # Main habitat label — centre of hex, avoid wedge area
         if size >= 26:
-            hab_str = "/".join(h.value[:3].upper() for h in tile.habitats)
-            fsz     = max(7, round(size * 0.19))
-            self.create_text(tx, ty - round(size * 0.44),
-                             text=hab_str, fill="#FFFFFF",
+            fsz = max(7, round(size * 0.19))
+            self.create_text(tx, ty - round(size * 0.18),
+                             text=h1.value[:3].upper(), fill="#FFFFFF",
                              font=("Courier New", fsz, "bold"), tags="tile")
 
-        # wildlife slot squares
+        # wildlife slot squares — bottom strip
         slots  = list(tile.wildlife_slots)
         n      = len(slots)
         sq     = max(7, round(size * 0.18))
         gap    = sq * 2 + 5
         x0     = tx - round((n - 1) * gap / 2)
-        base_y = ty + round(size * 0.24)
+        base_y = ty + round(size * 0.38)
         for i, w in enumerate(slots):
             sx = round(x0 + i * gap)
             abbr, wc = self._W_ABBR[w]
@@ -372,13 +413,13 @@ class HexCanvas(tk.Canvas):
                                  font=("Courier New", max(6, sq-1), "bold"),
                                  tags="slot")
 
-        # placed token badge
+        # placed token badge — centred
         if tile.wildlife_token:
             tok       = tile.wildlife_token
             abbr, tc  = self._W_ABBR[tok]
-            bw        = round(size * 0.36)
-            bh        = round(size * 0.22)
-            tok_y     = ty - round(size * 0.12)
+            bw        = round(size * 0.30)
+            bh        = round(size * 0.20)
+            tok_y     = ty + round(size * 0.10)
             self.create_rectangle(tx-bw+2, tok_y-bh+2, tx+bw+2, tok_y+bh+2,
                                   fill="#000000", outline="", tags="token")
             self.create_rectangle(tx-bw, tok_y-bh, tx+bw, tok_y+bh,
@@ -389,7 +430,7 @@ class HexCanvas(tk.Canvas):
 
         # keystone marker
         if tile.is_keystone and size >= 22:
-            self.create_text(tx + round(size * 0.60), ty - round(size * 0.52),
+            self.create_text(tx + round(size * 0.58), ty - round(size * 0.50),
                              text="*K", fill=GOLD,
                              font=("Courier New", max(7, round(size*0.18)), "bold"),
                              tags="tile")
@@ -840,8 +881,8 @@ class TileRotatePreview(tk.Toplevel):
         # rotation labels row
         lbl_frame = tk.Frame(self, bg=BG_DARK)
         lbl_frame.pack()
-        rot_names = ["Split ←→", "Split ↗↙", "Split ↖↘",
-                     "Flip ←→",  "Flip ↗↙",  "Flip ↖↘"]
+        rot_names = ["Edge 1", "Edge 2", "Edge 3",
+                     "Edge 4", "Edge 5", "Edge 6"]
         for rot, name in enumerate(rot_names):
             col = GOLD if rot == self._selected else TEXT_DIM
             tk.Label(lbl_frame, text=name, bg=BG_DARK, fg=col,
@@ -875,27 +916,36 @@ class TileRotatePreview(tk.Toplevel):
         col1 = HABITAT_RICH[h1][1]
         col2 = HABITAT_RICH[h2][1]
 
-        lf, rf = hex_split_polygons(corners, rotation)
-        canvas.create_polygon(lf,   fill=col1, outline="",       )
-        canvas.create_polygon(rf,   fill=col2, outline="",       )
-        canvas.create_polygon(flat, fill="",   outline="#CCCCCC", width=1)
+        # Wedge rendering — matches main board exactly
+        r0 = rotation % 6
+        r1 = (r0 + 1) % 6
+        # body polygon: center + the 5 non-wedge corners
+        body_pts = [cx, cy]
+        for i in range(5):
+            idx = (r1 + i) % 6
+            body_pts += [corners[idx][0], corners[idx][1]]
+        # wedge triangle: center + two adjacent corners
+        wedge_pts = [cx, cy,
+                     corners[r0][0], corners[r0][1],
+                     corners[r1][0], corners[r1][1]]
 
-        # habitat abbreviations on each half
-        fsz = 9
-        # left label at centroid of left half corners
-        li = [[0,1,2,3],[1,2,3,4],[2,3,4,5],
-              [0,3,4,5],[1,4,5,0],[2,5,0,1]][rotation]
-        ri = [[0,3,4,5],[1,4,5,0],[2,5,0,1],
-              [0,1,2,3],[1,2,3,4],[2,3,4,5]][rotation]
-        lx = round(sum(corners[i][0] for i in li) / len(li))
-        ly = round(sum(corners[i][1] for i in li) / len(li))
-        rx = round(sum(corners[i][0] for i in ri) / len(ri))
-        ry = round(sum(corners[i][1] for i in ri) / len(ri))
+        canvas.create_polygon(flat,      fill=col1, outline="")
+        canvas.create_polygon(wedge_pts, fill=col2, outline="")
+        canvas.create_polygon(flat,      fill="",   outline="#CCCCCC", width=1)
+        # divider lines
+        canvas.create_line(cx, cy, corners[r0][0], corners[r0][1],
+                           fill="#000000", width=1)
+        canvas.create_line(cx, cy, corners[r1][0], corners[r1][1],
+                           fill="#000000", width=1)
 
-        canvas.create_text(lx, ly, text=h1.value[:3].upper(),
-                           fill="white", font=("Courier New", fsz, "bold"))
-        canvas.create_text(rx, ry, text=h2.value[:3].upper(),
-                           fill="white", font=("Courier New", fsz, "bold"))
+        # h1 label — centre of body
+        canvas.create_text(cx, cy - 8, text=h1.value[:3].upper(),
+                           fill="white", font=("Courier New", 9, "bold"))
+        # h2 label — centroid of wedge triangle
+        wlx = round((cx + corners[r0][0] + corners[r1][0]) / 3)
+        wly = round((cy + corners[r0][1] + corners[r1][1]) / 3)
+        canvas.create_text(wlx, wly, text=h2.value[:3].upper(),
+                           fill="white", font=("Courier New", 7, "bold"))
 
         # wildlife slots — tiny squares bottom strip
         slots = list(self.tile.wildlife_slots)
@@ -1569,10 +1619,37 @@ class CascadiaApp:
             if not sel: return
             data = self.db.load_game_state(saves[sel[0]]["save_name"])
             dlg.destroy()
-            self._start_game(data["player_names"])
+            self._restore_game(data)
         tk.Button(dlg, text="Load", command=do_load,
                   bg=ACCENT, fg="white", font=FONT_B,
                   relief=tk.FLAT, padx=16, pady=6).pack(pady=8)
+
+    def _restore_game(self, data: dict):
+        from cascadia.game.engine import GameEngine
+        try:
+            self.engine = GameEngine.from_dict(data["game_state"])
+        except Exception as ex:
+            messagebox.showerror("Load Error",
+                                 f"Could not restore game state:\n{ex}\n\n"
+                                 "Starting a fresh game with the same players.")
+            self._start_game(data["player_names"])
+            return
+
+        self._start_time            = 0   # duration tracking starts fresh
+        self._phase                 = "tile"
+        self._cur_tile              = None
+        self._cur_token             = None
+        self._free_pick             = False
+        self._wrong_placement_warned= False
+
+        self._build_game_screen()
+
+        # Log restore summary
+        self._log(f"Game restored from save — Turn {self.engine.turn_number + 1}", "system")
+        for p in self.engine.players:
+            self._log(f"  {p.name}: {len(p.environment.tiles)} tiles, "
+                      f"{p.nature_tokens} nature tokens", "system")
+        self._refresh_ui()
 
     def _clear_root(self):
         for w in self.root.winfo_children(): w.destroy()

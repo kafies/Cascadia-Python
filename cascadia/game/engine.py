@@ -452,3 +452,62 @@ class GameEngine:
             "tile_deck_size": len(self._tile_deck),
             "token_bag_size": len(self._token_bag),
         }
+
+    # for save/load
+    @classmethod
+    def from_dict(cls, state: dict) -> "GameEngine":
+        def tile_from_dict(d: dict) -> HabitatTile:
+            tok = Wildlife(d["wildlife_token"]) if d.get("wildlife_token") else None
+            return HabitatTile(
+                tile_id       = d["tile_id"],
+                habitats      = [Habitat(h) for h in d["habitats"]],
+                wildlife_slots= set(Wildlife(w) for w in d["wildlife_slots"]),
+                is_keystone   = d.get("is_keystone", False),
+                wildlife_token= tok,
+                rotation      = d.get("rotation", 0),
+            )
+
+        player_names = [p["name"] for p in state["players"]]
+
+        # Use __new__ to skip __init__ (we'll set everything manually)
+        obj = cls.__new__(cls)
+        obj.variant             = state.get("variant", "standard")
+        obj.turn_number         = state["turn_number"]
+        obj.current_player_idx  = state["current_player_idx"]
+        obj.game_over           = state.get("game_over", False)
+        obj.score_breakdown     = None
+
+        # Rebuild players
+        obj.players = []
+        for pd in state["players"]:
+            p = Player(pd["name"])
+            p.environment.nature_tokens = pd["nature_tokens"]
+            for coord_str, td in pd["tiles"].items():
+                q, r = map(int, coord_str.split(","))
+                p.environment.add_tile(q, r, tile_from_dict(td))
+            obj.players.append(p)
+
+        # Rebuild scoring cards
+        obj.scoring_cards = {}
+        for w_val, v_val in state["scoring_cards"].items():
+            wildlife = Wildlife(w_val)
+            variant  = ScoringVariant(v_val)
+            obj.scoring_cards[wildlife] = _make_card(wildlife, variant)
+
+        # Rebuild draft pool
+        obj.draft_pool = []
+        for entry in state.get("draft_pool", []):
+            tile  = tile_from_dict(entry["tile"])
+            token = Wildlife(entry["token"])
+            obj.draft_pool.append(DraftEntry(tile=tile, token=token))
+
+        # Approximate remaining tile deck and token bag
+        # (we know how many are left from the snapshot)
+        full_deck   = create_full_deck()
+        obj._tile_deck = full_deck[:state.get("tile_deck_size", 0)]
+
+        token_bag = [w for w in Wildlife for _ in range(20)]
+        random.shuffle(token_bag)
+        obj._token_bag = token_bag[:state.get("token_bag_size", 20)]
+
+        return obj
