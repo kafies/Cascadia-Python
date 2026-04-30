@@ -1,0 +1,7 @@
+name: cascadia
+channels:
+  - defaults
+dependencies:
+  - python=3.11
+  - tk          # tkinter GUI toolkit (included with Python on most systems)
+  # sqlite3 is bundled with Python - no separate install needed
