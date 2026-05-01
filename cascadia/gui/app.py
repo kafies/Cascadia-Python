@@ -326,26 +326,43 @@ class HexCanvas(tk.Canvas):
         return round(x), round(y)
 
     @staticmethod
-    def _wedge_polygons(tx: int, ty: int, corners, rotation: int):
+    def _split_polygons(tx: int, ty: int, corners, rotation: int):
         """
-        Split a hex into a large main body and a small corner wedge (1/6 slice).
-        The wedge = triangle: center + corner[rot] + corner[(rot+1)%6].
-        The body  = the remaining 5-cornered polygon.
+        Split hex into 2/3 (main) + 1/3 (accent) zones.
 
-        Returns (body_flat, wedge_flat) as flat [x,y,...] coordinate lists.
+        The accent zone = quadrilateral: corner[r0] + corner[r1] + corner[r2]
+        anchored at the center — i.e. two adjacent wedges sharing one full edge.
+        This gives a clean straight boundary across the hex (chord between
+        corner[r0] and corner[r2]) rather than two lines meeting at center.
+
+        rotation 0-5 moves the accent zone to each of the 6 positions.
+
+        Returns (main_flat, accent_flat, divider_p0, divider_p1)
+          main_flat   : flat [x,y,...] for the 4-point main polygon
+          accent_flat : flat [x,y,...] for the 4-point accent polygon
+          divider_p0/1: the two endpoints of the straight divider line
         """
         r0 = rotation % 6
         r1 = (r0 + 1) % 6
-        cx, cy = tx, ty
-        # wedge: 3 points — center + two adjacent corners
-        wedge = [cx, cy, corners[r0][0], corners[r0][1],
-                 corners[r1][0], corners[r1][1]]
-        # body: center + the other 5 corners in order
-        body_pts = [cx, cy]
-        for i in range(5):
-            idx = (r1 + i) % 6
-            body_pts += [corners[idx][0], corners[idx][1]]
-        return body_pts, wedge
+        r2 = (r0 + 2) % 6
+
+        # Accent: 4 points — center + corner r0 + corner r1 + corner r2
+        #   (quadrilateral, fan shape = 2 triangles = 2/6 of hex)
+        accent = [tx, ty,
+                  corners[r0][0], corners[r0][1],
+                  corners[r1][0], corners[r1][1],
+                  corners[r2][0], corners[r2][1]]
+
+        # Main: the remaining 4 corners + center
+        main_pts = [tx, ty]
+        for i in range(4):
+            idx = (r2 + i) % 6
+            main_pts += [corners[idx][0], corners[idx][1]]
+
+        # Divider = straight chord from corner[r0] to corner[r2]
+        d0 = corners[r0]
+        d2 = corners[r2]
+        return main_pts, accent, d0, d2
 
     def _draw_tile(self, q, r, tile: HabitatTile, cx, cy, size):
         tx, ty  = self._ixy(q, r, cx, cy, size)
@@ -354,55 +371,61 @@ class HexCanvas(tk.Canvas):
 
         h1 = tile.habitats[0]
         h2 = tile.habitats[1] if len(tile.habitats) > 1 else None
-        _, col1, _ = HABITAT_RICH[h1]
+        _, col1, col1d = HABITAT_RICH[h1]
 
         selected = (q, r) == self._selected_hex
-        outline  = GOLD  if selected else "#BBBBBB"
-        ow       = 3     if selected else 1
+        outline  = GOLD if selected else "#BBBBBB"
+        ow       = 3    if selected else 1
 
         if h2:
             _, col2, _ = HABITAT_RICH[h2]
             rot        = getattr(tile, "rotation", 0)
-            body, wedge = self._wedge_polygons(tx, ty, corners, rot)
-            # Full hex in h1 colour first, then wedge in h2 on top
-            self.create_polygon(flat,  fill=col1, outline="",      tags="tile")
-            self.create_polygon(wedge, fill=col2, outline="",      tags="tile")
-            # Border on top of everything
-            self.create_polygon(flat, fill="", outline=outline, width=ow, tags="tile")
-            # Thin divider line between the two zones
-            r0 = rot % 6
-            r1 = (r0 + 1) % 6
-            self.create_line(tx, ty, corners[r0][0], corners[r0][1],
-                             fill="#000000", width=1, tags="tile")
-            self.create_line(tx, ty, corners[r1][0], corners[r1][1],
-                             fill="#000000", width=1, tags="tile")
+            main_pts, accent, d0, d2 = self._split_polygons(tx, ty, corners, rot)
 
-            # Small habitat label inside wedge (centroid of the triangle)
-            wlx = round((tx + corners[r0][0] + corners[r1][0]) / 3)
-            wly = round((ty + corners[r0][1] + corners[r1][1]) / 3)
-            if size >= 30:
-                fsz2 = max(6, round(size * 0.14))
+            # Draw main zone (h1, 4/6) then accent zone (h2, 2/6)
+            self.create_polygon(flat,      fill=col1,  outline="", tags="tile")
+            self.create_polygon(accent,    fill=col2,  outline="", tags="tile")
+
+            # Outer border
+            self.create_polygon(flat, fill="", outline=outline, width=ow, tags="tile")
+
+            # h2 label — centroid of the accent quad
+            r0, r1_, r2_ = rot%6, (rot+1)%6, (rot+2)%6
+            wlx = round((tx + corners[r0][0] + corners[r1_][0] + corners[r2_][0]) / 4)
+            wly = round((ty + corners[r0][1] + corners[r1_][1] + corners[r2_][1]) / 4)
+            if size >= 28:
+                fsz2 = max(6, round(size * 0.15))
                 self.create_text(wlx, wly, text=h2.value[:3].upper(),
                                  fill="#FFFFFF",
                                  font=("Courier New", fsz2, "bold"),
                                  tags="tile")
+
+            # h1 label — pull away from accent toward its centroid
+            # centroid of main zone (center + 4 corners on that side)
+            r2_i = (rot + 2) % 6
+            main_cx = round((tx + sum(corners[(r2_i+i)%6][0] for i in range(4))) / 5)
+            main_cy = round((ty + sum(corners[(r2_i+i)%6][1] for i in range(4))) / 5)
+            if size >= 26:
+                fsz = max(7, round(size * 0.18))
+                self.create_text(main_cx, main_cy, text=h1.value[:3].upper(),
+                                 fill="#FFFFFF",
+                                 font=("Courier New", fsz, "bold"),
+                                 tags="tile")
         else:
             self.create_polygon(flat, fill=col1, outline=outline, width=ow, tags="tile")
+            if size >= 26:
+                fsz = max(7, round(size * 0.19))
+                self.create_text(tx, ty - round(size * 0.06),
+                                 text=h1.value[:3].upper(), fill="#FFFFFF",
+                                 font=("Courier New", fsz, "bold"), tags="tile")
 
-        # Main habitat label — centre of hex, avoid wedge area
-        if size >= 26:
-            fsz = max(7, round(size * 0.19))
-            self.create_text(tx, ty - round(size * 0.18),
-                             text=h1.value[:3].upper(), fill="#FFFFFF",
-                             font=("Courier New", fsz, "bold"), tags="tile")
-
-        # wildlife slot squares — bottom strip
+        # Wildlife slot squares — bottom strip
         slots  = list(tile.wildlife_slots)
         n      = len(slots)
-        sq     = max(7, round(size * 0.18))
+        sq     = max(7, round(size * 0.17))
         gap    = sq * 2 + 5
         x0     = tx - round((n - 1) * gap / 2)
-        base_y = ty + round(size * 0.38)
+        base_y = ty + round(size * 0.60)
         for i, w in enumerate(slots):
             sx = round(x0 + i * gap)
             abbr, wc = self._W_ABBR[w]
@@ -413,13 +436,13 @@ class HexCanvas(tk.Canvas):
                                  font=("Courier New", max(6, sq-1), "bold"),
                                  tags="slot")
 
-        # placed token badge — centred
+        # Placed token badge — centred in hex body
         if tile.wildlife_token:
-            tok       = tile.wildlife_token
-            abbr, tc  = self._W_ABBR[tok]
-            bw        = round(size * 0.30)
-            bh        = round(size * 0.20)
-            tok_y     = ty + round(size * 0.10)
+            tok      = tile.wildlife_token
+            abbr, tc = self._W_ABBR[tok]
+            bw       = round(size * 0.28)
+            bh       = round(size * 0.19)
+            tok_y    = ty + round(size * 0.24)
             self.create_rectangle(tx-bw+2, tok_y-bh+2, tx+bw+2, tok_y+bh+2,
                                   fill="#000000", outline="", tags="token")
             self.create_rectangle(tx-bw, tok_y-bh, tx+bw, tok_y+bh,
@@ -428,9 +451,9 @@ class HexCanvas(tk.Canvas):
                              font=("Courier New", max(8, round(bh * 1.1)), "bold"),
                              tags="token")
 
-        # keystone marker
+        # Keystone marker
         if tile.is_keystone and size >= 22:
-            self.create_text(tx + round(size * 0.58), ty - round(size * 0.50),
+            self.create_text(tx + round(size * 0.56), ty - round(size * 0.48),
                              text="*K", fill=GOLD,
                              font=("Courier New", max(7, round(size*0.18)), "bold"),
                              tags="tile")
@@ -916,36 +939,37 @@ class TileRotatePreview(tk.Toplevel):
         col1 = HABITAT_RICH[h1][1]
         col2 = HABITAT_RICH[h2][1]
 
-        # Wedge rendering — matches main board exactly
+        # 2/6 split rendering — matches main board exactly
         r0 = rotation % 6
         r1 = (r0 + 1) % 6
-        # body polygon: center + the 5 non-wedge corners
-        body_pts = [cx, cy]
-        for i in range(5):
-            idx = (r1 + i) % 6
-            body_pts += [corners[idx][0], corners[idx][1]]
-        # wedge triangle: center + two adjacent corners
-        wedge_pts = [cx, cy,
-                     corners[r0][0], corners[r0][1],
-                     corners[r1][0], corners[r1][1]]
+        r2 = (r0 + 2) % 6
 
-        canvas.create_polygon(flat,      fill=col1, outline="")
-        canvas.create_polygon(wedge_pts, fill=col2, outline="")
-        canvas.create_polygon(flat,      fill="",   outline="#CCCCCC", width=1)
-        # divider lines
-        canvas.create_line(cx, cy, corners[r0][0], corners[r0][1],
-                           fill="#000000", width=1)
-        canvas.create_line(cx, cy, corners[r1][0], corners[r1][1],
-                           fill="#000000", width=1)
+        # accent zone (h2): center + 3 corners = 2/6 of hex
+        accent = [cx, cy,
+                  corners[r0][0], corners[r0][1],
+                  corners[r1][0], corners[r1][1],
+                  corners[r2][0], corners[r2][1]]
+        # main zone (h1): center + remaining 4 corners
+        main_pts = [cx, cy]
+        for i in range(4):
+            idx = (r2 + i) % 6
+            main_pts += [corners[idx][0], corners[idx][1]]
 
-        # h1 label — centre of body
-        canvas.create_text(cx, cy - 8, text=h1.value[:3].upper(),
-                           fill="white", font=("Courier New", 9, "bold"))
-        # h2 label — centroid of wedge triangle
-        wlx = round((cx + corners[r0][0] + corners[r1][0]) / 3)
-        wly = round((cy + corners[r0][1] + corners[r1][1]) / 3)
+        canvas.create_polygon(flat,     fill=col1, outline="")
+        canvas.create_polygon(accent,   fill=col2, outline="")
+
+        canvas.create_polygon(flat, fill="", outline="#CCCCCC", width=1)
+
+        # h2 label — centroid of accent quad
+        wlx = round((cx + corners[r0][0] + corners[r1][0] + corners[r2][0]) / 4)
+        wly = round((cy + corners[r0][1] + corners[r1][1] + corners[r2][1]) / 4)
         canvas.create_text(wlx, wly, text=h2.value[:3].upper(),
-                           fill="white", font=("Courier New", 7, "bold"))
+                           fill="white", font=("Courier New", 8, "bold"))
+        # h1 label — centroid of main zone
+        main_cx = round((cx + sum(corners[(r2+i)%6][0] for i in range(4))) / 5)
+        main_cy = round((cy + sum(corners[(r2+i)%6][1] for i in range(4))) / 5)
+        canvas.create_text(main_cx, main_cy, text=h1.value[:3].upper(),
+                           fill="white", font=("Courier New", 9, "bold"))
 
         # wildlife slots — tiny squares bottom strip
         slots = list(self.tile.wildlife_slots)
